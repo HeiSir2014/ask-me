@@ -1,0 +1,212 @@
+name: Release
+
+on:
+  push:
+    # 当推送版本标签时触发，例如 v1.0.0
+    tags:
+      - 'v*'
+
+env:
+  # 使用 Bun 的最新版本
+  BUN_VERSION: 'latest'
+
+jobs:
+  # 构建作业 - 矩阵策略支持多平台
+  build:
+    name: Build ${{ matrix.platform }}
+
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          # Windows x64
+          - platform: 'windows-x64'
+            os: 'windows-latest'
+            artifact_name: 'ask-me-windows-x64.exe'
+
+          # Linux x64
+          - platform: 'linux-x64'
+            os: 'ubuntu-latest'
+            artifact_name: 'ask-me-linux-x64'
+
+          # macOS Intel (x64)
+          - platform: 'macos-x64'
+            os: 'macos-latest'
+            artifact_name: 'ask-me-macos-x64'
+
+          # macOS Apple Silicon (arm64)
+          - platform: 'macos-arm64'
+            os: 'macos-latest'
+            artifact_name: 'ask-me-macos-arm64'
+
+    steps:
+      # 检出代码
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 设置 Bun
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      # 安装依赖
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # 编译指定平台
+      - name: Build for ${{ matrix.platform }}
+        run: |
+          case ${{ matrix.platform }} in
+            windows-x64)
+              bun run compile:windows
+              ;;
+            linux-x64)
+              bun run compile:linux
+              ;;
+            macos-x64)
+              bun run compile:macos:x64
+              ;;
+            macos-arm64)
+              bun run compile:macos:arm64
+              ;;
+          esac
+
+      # 上传编译产物
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            dist/${{ matrix.platform }}/*
+          retention-days: 30
+
+      # 显示编译结果
+      - name: Show build output
+        run: |
+          echo "✅ Build completed for ${{ matrix.platform }}"
+          ls -lah dist/${{ matrix.platform }}/
+          if [ -f "dist/${{ matrix.platform }}/ask-me" ]; then
+            echo "📄 File info:"
+            file "dist/${{ matrix.platform }}/ask-me"
+            echo "📏 Size:"
+            du -h "dist/${{ matrix.platform }}/ask-me"
+          fi
+          if [ -f "dist/${{ matrix.platform }}/ask-me.exe" ]; then
+            echo "📄 File info:"
+            file "dist/${{ matrix.platform }}/ask-me.exe"
+            echo "📏 Size:"
+            du -h "dist/${{ matrix.platform }}/ask-me.exe"
+          fi
+
+  # 发布作业
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
+
+    steps:
+      # 检出代码
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 下载所有编译产物
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      # 列出下载的文件
+      - name: List downloaded artifacts
+        run: |
+          echo "📦 Downloaded artifacts:"
+          find ./artifacts -type f -exec ls -lah {} \;
+
+      # 使用 softprops/action-gh-release 创建 Release
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Ask-Me CLI ${{ github.ref_name }}
+          body: |
+            ## 🎉 Ask-Me CLI ${{ github.ref_name }}
+
+            Interactive prompt tool for Cursor AI - continuous work loop
+
+            ### 📦 Download Binaries
+
+            | Platform | Architecture | Download |
+            |----------|--------------|----------|
+            | Windows  | x64          | [ask-me-windows-x64.exe](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/ask-me-windows-x64.exe) |
+            | Linux    | x64          | [ask-me-linux-x64](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/ask-me-linux-x64) |
+            | macOS    | Intel (x64)  | [ask-me-macos-x64](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/ask-me-macos-x64) |
+            | macOS    | Apple Silicon (arm64) | [ask-me-macos-arm64](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/ask-me-macos-arm64) |
+
+            ### 🚀 Quick Install
+
+            ```bash
+            # macOS/Linux
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/scripts/install.sh | bash
+
+            # Windows (PowerShell as Administrator)
+            iwr -useb https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/ask-me-windows-x64.exe | iex
+            ```
+
+            ### ✨ Features
+
+            - 🔄 Continuous work loop - Cursor AI interacts via ask-me
+            - 📝 Markdown history - Archive sessions by project and date
+            - ✏️ Multi-editor support - 15+ editors (VSCode, Cursor, Zed, Vim, etc.)
+            - 🎯 Jump to line - Auto-focus input area
+            - ⏱️ Timeout reminders - Friendly alert after 4 minutes
+            - 🔍 First-run experience - Auto-detect editor
+            - ✅ Config validation - Using Zod for settings validation
+
+            ### 📚 Usage
+
+            ```bash
+            # Install and link
+            bun install && bun link
+
+            # Run directly
+            ask-me --cwd="/path/to/project" --title="Task done"
+
+            # Or use short alias
+            ask --title="Quick update"
+
+            # Install compiled binary
+            ./dist/macos-x64/ask-me install
+            ```
+
+            ### 🔧 Build from Source
+
+            ```bash
+            git clone https://github.com/${{ github.repository }}.git
+            cd ask-me
+            bun install
+            bun run compile
+            ```
+
+            ---
+            Built with ❤️ using Bun + TypeScript
+
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            ./artifacts/ask-me-windows-x64/ask-me.exe
+            ./artifacts/ask-me-linux-x64/ask-me
+            ./artifacts/ask-me-macos-x64/ask-me
+            ./artifacts/ask-me-macos-arm64/ask-me
+
+      # 验证 Release
+      - name: Verify Release
+        run: |
+          echo "✅ Release created successfully!"
+          echo "🔗 Release URL: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
