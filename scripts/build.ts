@@ -25,11 +25,40 @@ const outfile = args.find((a) => a.startsWith('--outfile='))?.split('=')[1];
 
 const buildArgs: string[] = ['./src/index.ts', '--compile', '--minify'];
 
-if (target) {
-  buildArgs.push(`--target=${target}`);
+// Auto-detect platform if target not specified
+let finalTarget = target;
+if (!finalTarget) {
+  const platform = process.platform;
+  const arch = process.arch;
+
+  if (platform === 'win32') {
+    finalTarget = 'bun-windows-x64';
+  } else if (platform === 'darwin') {
+    finalTarget = arch === 'arm64' ? 'bun-darwin-arm64' : 'bun-darwin-x64';
+  } else if (platform === 'linux') {
+    finalTarget = 'bun-linux-x64';
+  }
 }
 
-const finalOutfile = outfile || 'dist/ask-me';
+if (finalTarget) {
+  buildArgs.push(`--target=${finalTarget}`);
+}
+
+// Auto-generate output path if not specified
+let finalOutfile = outfile;
+if (!finalOutfile && finalTarget) {
+  if (finalTarget.includes('windows')) {
+    finalOutfile = 'dist/windows-x64/ask-me.exe';
+  } else if (finalTarget.includes('darwin-arm64')) {
+    finalOutfile = 'dist/macos-arm64/ask-me';
+  } else if (finalTarget.includes('darwin')) {
+    finalOutfile = 'dist/macos-x64/ask-me';
+  } else if (finalTarget.includes('linux')) {
+    finalOutfile = 'dist/linux-x64/ask-me';
+  }
+}
+
+finalOutfile = finalOutfile || 'dist/ask-me';
 buildArgs.push(`--outfile=${finalOutfile}`);
 
 console.log('Building with embedded ask-me.mdc...');
@@ -50,7 +79,7 @@ try {
 }
 
 // Post-build: Sign macOS binaries to prevent "damaged" error on other machines
-if (exitCode === 0 && target?.includes('darwin')) {
+if (exitCode === 0 && finalTarget?.includes('darwin')) {
   console.log('Signing macOS binary with ad-hoc signature...');
 
   try {
@@ -71,17 +100,17 @@ if (exitCode === 0 && target?.includes('darwin')) {
       await xattrProc.exited;
     } else {
       console.log('⚠ Signing failed (codesign not available or error)');
-      console.log('  On target machine, run: xattr -c ' + finalOutfile);
+      console.log('   On target machine, run: xattr -c ' + finalOutfile);
     }
   } catch {
     // codesign not available (e.g., cross-compiling from non-macOS)
     console.log('⚠ Cannot sign binary (not on macOS)');
-    console.log('  On target machine, run: xattr -c ' + finalOutfile);
+    console.log('   On target machine, run: xattr -c ' + finalOutfile);
   }
 }
 
 // Post-build: Ensure executable permissions for Unix binaries
-if (exitCode === 0 && !target?.includes('windows')) {
+if (exitCode === 0 && !finalTarget?.includes('windows')) {
   try {
     chmodSync(finalOutfile, 0o755);
     console.log('✓ Set executable permissions');

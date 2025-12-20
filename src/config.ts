@@ -168,7 +168,7 @@ export function saveSettings(settings: Settings): void {
         `Permission denied writing to ${settingsPath}\n\n` +
           `This usually happens if you previously ran ask-me with sudo.\n` +
           `Fix by changing ownership:\n\n` +
-          `  sudo chown -R $(whoami) "${configDir}"\n`
+          `  sudo chown -R $(whoami) "${configDir}"\n`
       );
     }
 
