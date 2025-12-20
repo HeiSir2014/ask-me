@@ -24,7 +24,7 @@ jobs:
           # Windows x64
           - platform: 'windows-x64'
             os: 'windows-latest'
-            artifact_name: 'ask-me-windows-x64.exe'
+            artifact_name: 'ask-me-windows-x64'
 
           # Linux x64
           - platform: 'linux-x64'
@@ -58,21 +58,17 @@ jobs:
 
       # 编译指定平台
       - name: Build for ${{ matrix.platform }}
+        shell: bash
         run: |
-          case ${{ matrix.platform }} in
-            windows-x64)
-              bun run compile:windows
-              ;;
-            linux-x64)
-              bun run compile:linux
-              ;;
-            macos-x64)
-              bun run compile:macos:x64
-              ;;
-            macos-arm64)
-              bun run compile:macos:arm64
-              ;;
-          esac
+          if [ "${{ matrix.platform }}" = "windows-x64" ]; then
+            bun run compile:windows
+          elif [ "${{ matrix.platform }}" = "linux-x64" ]; then
+            bun run compile:linux
+          elif [ "${{ matrix.platform }}" = "macos-x64" ]; then
+            bun run compile:macos:x64
+          elif [ "${{ matrix.platform }}" = "macos-arm64" ]; then
+            bun run compile:macos:arm64
+          fi
 
       # 上传编译产物
       - name: Upload build artifact
