@@ -81,6 +81,7 @@ jobs:
 
       # 显示编译结果
       - name: Show build output
+        shell: bash
         run: |
           echo "✅ Build completed for ${{ matrix.platform }}"
           ls -lah dist/${{ matrix.platform }}/
