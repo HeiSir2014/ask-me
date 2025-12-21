@@ -1,6 +1,6 @@
 {
   "name": "ask-me",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Interactive prompt tool for AI agents - continuous work loop",
   "type": "module",
   "module": "src/index.ts",
