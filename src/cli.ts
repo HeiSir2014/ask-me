@@ -48,10 +48,10 @@ function formatHelp(cmd: Command): string {
   if (name === 'ask-me') {
     output += '\n';
     output += `${chalk.bold('Pause/Resume:')}\n`;
-    output += `  ${chalk.cyan('ask-me pause')}   Stop AI agent immediately (create .cursor/pause)\n`;
-    output += `  ${chalk.cyan('ask-me resume')}  Continue AI agent (remove .cursor/pause)\n`;
-    output += `  ${chalk.dim('Note: AI agent checks .cursor/pause before each operation')}\n`;
-    output += `  ${chalk.dim('      Running ask-me main command auto-removes pause file')}\n`;
+    output += `  ${chalk.cyan('ask-me pause')}   Stop AI agent immediately (create .cursor/.pause-signal)\n`;
+    output += `  ${chalk.cyan('ask-me resume')}  Continue AI agent (remove .cursor/.pause-signal)\n`;
+    output += `  ${chalk.dim('Note: AI agent checks .cursor/.pause-signal before each operation')}\n`;
+    output += `  ${chalk.dim('      Running ask-me main command auto-removes pause signal')}\n`;
   }
 
   output += '\n';
@@ -153,10 +153,16 @@ function createProgram(): Command {
   program
     .command('init')
     .description('Initialize Cursor rules in current project')
-    .action(() => {
+    .option('--hooks <scope>', 'Install hooks (project|user|none)', 'project')
+    .option('--no-hooks', 'Skip hooks installation')
+    .action((opts) => {
       parsedCommand = {
         type: 'init',
-        command: { targetDir: process.cwd() },
+        command: {
+          targetDir: process.cwd(),
+          hooksScope: opts.hooks,
+          skipHooks: opts.noHooks,
+        },
       };
     });
 
@@ -171,7 +177,7 @@ function createProgram(): Command {
   // Pause subcommand
   program
     .command('pause')
-    .description('Pause Cursor AI agent (create .cursor/pause file)')
+    .description('Pause Cursor AI agent (create .cursor/.pause-signal file)')
     .action(() => {
       parsedCommand = {
         type: 'pause',
@@ -182,11 +188,50 @@ function createProgram(): Command {
   // Resume subcommand
   program
     .command('resume')
-    .description('Resume Cursor AI agent (remove .cursor/pause file)')
+    .description('Resume Cursor AI agent (remove .cursor/.pause-signal file)')
     .action(() => {
       parsedCommand = {
         type: 'resume',
         command: { targetDir: process.cwd() },
+      };
+    });
+
+  // Hooks subcommand
+  program
+    .command('hooks')
+    .description('Integrate with Cursor hooks for pause/resume')
+    .option('--status', 'Get current pause status (for user)')
+    .configureHelp({
+      formatHelp: () => {
+        let output = '\n';
+        output += `${chalk.bold('Usage:')} ask-me hooks ${chalk.dim('[options]')}\n`;
+        output += '\n';
+        output += 'Integrate with Cursor hooks for pause/resume control\n';
+        output += '\n';
+        output += `${chalk.bold('Options:')}\n`;
+        output += `  ${chalk.cyan('--status')}  Get current pause status\n`;
+        output += '\n';
+        output += `${chalk.bold('How it works:')}\n`;
+        output += `  When called without options, reads stdin JSON from Cursor hooks.\n`;
+        output += `  Uses ${chalk.cyan('hook_event_name')} field to identify the event type.\n`;
+        output += `  Before hooks check pause status, after hooks record audit logs.\n`;
+        output += '\n';
+        output += `${chalk.bold('Examples:')}\n`;
+        output += `  ${chalk.dim('# Called by Cursor hooks (reads stdin):')}\n`;
+        output += `  ask-me hooks\n`;
+        output += '\n';
+        output += `  ${chalk.dim('# Check status manually:')}\n`;
+        output += `  ask-me hooks --status\n`;
+        output += '\n';
+        return output;
+      },
+    })
+    .action((opts) => {
+      parsedCommand = {
+        type: 'hooks',
+        command: {
+          status: opts.status,
+        },
       };
     });
 

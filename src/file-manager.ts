@@ -1,4 +1,4 @@
-import { join, resolve, dirname } from 'path';
+import { join } from 'path';
 import {
   existsSync,
   readFileSync,
@@ -9,6 +9,7 @@ import {
   renameSync,
 } from 'fs';
 import { getFilesDir, ensureConfigDir } from './config.ts';
+import { getTodayDate, normalizeCwdPath } from './utils/index.ts';
 
 // Simple file locking to prevent concurrent access
 const LOCK_TIMEOUT_MS = 30000; // 30 seconds
@@ -70,38 +71,8 @@ export async function withFileLock<T>(path: string, fn: () => T | Promise<T>): P
 
 // Map CWD path to a safe directory name
 export function mapCwdToDirName(cwd: string): string {
-  // Resolve to absolute path first (handles "." and relative paths)
-  let absolutePath = resolve(cwd);
-
-  // Normalize to lowercase on Windows (case-insensitive filesystem)
-  if (process.platform === 'win32') {
-    absolutePath = absolutePath.toLowerCase();
-  }
-
-  // Normalize path separators and remove drive colon on Windows
-  let normalized = absolutePath
-    .replace(/\\/g, '-') // Replace backslashes
-    .replace(/\//g, '-') // Replace forward slashes
-    .replace(/:/g, '') // Remove colons (Windows drive letters)
-    .replace(/^-+/, '') // Remove leading dashes
-    .replace(/-+$/g, '') // Remove trailing dashes
-    .replace(/-+/g, '-'); // Collapse multiple dashes
-
-  // Ensure name is not empty
-  if (!normalized) {
-    normalized = 'default';
-  }
-
-  return normalized;
-}
-
-// Get today's date in YYYY-MM-DD format
-function getTodayDate(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  // Use the centralized normalizeCwdPath function
+  return normalizeCwdPath(cwd);
 }
 
 // Get project directory path
