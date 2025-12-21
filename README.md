@@ -4,9 +4,22 @@
 
 一个为 Cursor 的交互式命令行工具，实现持续工作循环模式。
 
+---
+
+**📖 Documentation Languages:**
+
+- **中文版** (Chinese): 本文档
+- **English Version**: [docs/README_EN.md](docs/README_EN.md)
+
+---
+
 ## 功能特性
 
 - 🔄 **持续工作循环** - Cursor AI 通过 ask-me 与用户交互，无需在聊天框等待
+- ⏸️ **智能暂停机制** - 基于 Cursor Hooks，事件驱动，精准控制 AI 执行
+- 🪝 **原生 hooks 集成** - 监听 9 种 Cursor 事件，实时检查暂停状态
+- 📊 **完整审计追踪** - 记录所有 hook 事件到统一目录，支持会话级别追踪
+- 🔀 **智能配置合并** - 自动保留用户现有 hooks 配置，优先级自动排序
 - 📝 **Markdown 历史记录** - 所有会话按项目和日期归档在 `~/.ask-me/projects/` 目录
 - ✏️ **多编辑器支持** - 支持 VSCode、Cursor、Zed、Vim 等 15+ 编辑器
 - 🎯 **跳转到行** - 自动定位到输入区域
@@ -69,7 +82,7 @@ bun run compile:all
 
 ## 快速开始
 
-### 1. 初始化 Cursor 规则
+### 1. 初始化 Cursor 规则和 Hooks
 
 在项目目录中运行：
 
@@ -77,9 +90,57 @@ bun run compile:all
 ask-me init
 ```
 
-这会将 `ask-me.mdc` 安装到 `.cursor/rules/` 目录，启用持续工作模式。
+这会：
 
-### 2. 选择编辑器
+- 将 `ask-me.mdc` 安装到 `.cursor/rules/` 目录，启用持续工作模式
+- 安装 hooks 配置到 `.cursor/hooks.json`（支持暂停检查）
+
+#### Hooks 作用域选项
+
+```bash
+# 项目级（推荐）- hooks 仅影响当前项目
+ask-me init
+# 或显式指定
+ask-me init --hooks project
+
+# 用户级 - hooks 影响所有项目
+ask-me init --hooks user
+
+# 跳过 hooks 安装
+ask-me init --no-hooks
+```
+
+**智能配置合并**：ask-me 会自动保留您现有的 hooks 配置，并将自己的配置放在最前面（最高优先级）。
+
+### 2. 使用暂停功能
+
+在任何时候暂停 AI 执行：
+
+```bash
+ask-me pause
+```
+
+恢复 AI 执行：
+
+```bash
+ask-me resume
+```
+
+检查当前暂停状态：
+
+```bash
+ask-me hooks --status
+# 输出: paused 或 running
+```
+
+**工作原理**：
+
+- 执行 `ask-me pause` 后，会创建 `.cursor/.pause-signal` 文件
+- Cursor hooks 在每次操作前自动检查此文件
+- 如果文件存在，AI 会立即停止并等待用户输入
+- 用户输入后（运行 `ask-me` 主命令或 `ask-me resume`），自动清理暂停信号
+
+### 3. 选择编辑器
 
 ```bash
 # 查看可用编辑器
@@ -92,7 +153,7 @@ ask-me editor use cursor
 ask-me editor set "code-insiders -r -w"
 ```
 
-### 3. 开始使用
+### 4. 开始使用
 
 Cursor AI 会自动调用：
 
@@ -145,8 +206,37 @@ ask-me editor set "<command>"
 ### 初始化命令
 
 ```bash
-# 初始化 Cursor 规则到当前项目
+# 初始化 Cursor 规则和 hooks 到当前项目
 ask-me init
+
+# 指定 hooks 作用域
+ask-me init --hooks project   # 项目级（默认）
+ask-me init --hooks user      # 用户级
+ask-me init --no-hooks        # 跳过 hooks 安装
+```
+
+### 暂停/恢复命令
+
+```bash
+# 暂停 AI 执行（创建 .cursor/.pause-signal）
+ask-me pause
+
+# 恢复 AI 执行（删除暂停信号）
+ask-me resume
+
+# 检查暂停状态
+ask-me hooks --status
+# 输出: paused 或 running
+```
+
+### Hooks 命令（Cursor 自动调用）
+
+```bash
+# 检查暂停状态并记录审计日志（由 Cursor hooks 自动调用）
+ask-me hooks
+
+# 手动检查状态（用户使用）
+ask-me hooks --status
 ```
 
 ### 安装命令
@@ -215,22 +305,46 @@ ask-me editor --help
 
 ## 文件存储结构
 
-会话历史按项目和日期归档：
+### 会话历史存储
 
 ```
 ~/.ask-me/
 ├── settings.json           # 配置文件
 └── projects/
-    └── g-project-ask-me/   # 项目目录（基于 CWD 路径）
+    └── {normalized-cwd}/   # 项目目录（基于 CWD 路径）
         ├── latest.md       # 当前会话
-        ├── 2025-12-19.md   # 归档会话
-        └── 2025-12-18.md
+        ├── 2025-12-21.md   # 归档会话（按日期）
+        └── 2025-12-20.md
+```
+
+### 审计日志存储（Hooks 集成）
+
+```
+~/.ask-me/
+└── projects/
+    └── {normalized-cwd}/
+        └── {date}/         # 日期目录
+            ├── pause-data.json      # 暂停元数据
+            ├── pause-audit.log      # 暂停审计日志
+            └── hooks-audit.jsonl    # Hook 事件审计日志
+```
+
+### 项目级文件
+
+```
+{project}/
+├── .cursor/
+│   ├── rules/
+│   │   └── ask-me.mdc          # Cursor 规则文件
+│   ├── hooks.json              # Hooks 配置
+│   └── .pause-signal           # 暂停信号文件（存在时表示已暂停）
 ```
 
 ### 路径映射规则
 
 - `/home/user/project` → `home-user-project/`
 - `C:\Users\dev\app` → `c-users-dev-app/`
+- 所有路径转换为小写，非字母数字字符替换为 `-`
 
 ### 文件格式示例
 
@@ -292,6 +406,8 @@ Cursor AI 通过检查 stdout 是否为空来判断用户是否提供了输入�
 
 ## 与 Cursor AI 集成
 
+### 持续工作循环
+
 ```bash
 # Cursor AI 调用 ask-me 并捕获 stdout
 USER_INPUT=$(ask-me --cwd="..." --title="..." --context="...")
@@ -304,6 +420,77 @@ else
   # 收到有效输入 - 处理它
   echo "$USER_INPUT"
 fi
+```
+
+### Hooks 集成原理
+
+ask-me 使用 Cursor 的原生 hooks 机制实现暂停功能：
+
+1. **安装阶段**：`ask-me init` 创建 `.cursor/hooks.json` 配置
+2. **触发阶段**：Cursor 在 9 种事件发生前/后自动调用 `ask-me hooks`
+3. **检查阶段**：hooks 命令读取 stdin JSON，通过 `hook_event_name` 识别事件类型
+4. **决策阶段**：
+   - before hooks 检查暂停状态，返回 `permission: allow/deny`
+   - after hooks 记录审计日志
+   - beforeSubmitPrompt 清理暂停信号
+
+### 监听的 Hook 事件
+
+#### Before Hooks（检查暂停）
+
+- `beforeShellExecution` - Shell 命令执行前
+- `beforeMCPExecution` - MCP 工具执行前
+- `beforeReadFile` - 文件读取前
+
+#### After Hooks（记录审计）
+
+- `afterShellExecution` - Shell 命令执行后
+- `afterMCPExecution` - MCP 工具执行后
+- `afterFileEdit` - 文件编辑后
+- `afterAgentThought` - AI 思考后
+- `afterAgentResponse` - AI 响应后
+
+#### Control Hooks（流程控制）
+
+- `beforeSubmitPrompt` - 用户提交前（清理暂停信号）
+- `stop` - 循环结束时
+
+### 生成的 hooks.json 示例
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      { "command": "ask-me hooks" },
+      { "command": "prettier --write" },
+      { "command": "eslint ." }
+    ],
+    "afterShellExecution": [{ "command": "ask-me hooks" }],
+    "beforeMCPExecution": [{ "command": "ask-me hooks" }],
+    "afterMCPExecution": [{ "command": "ask-me hooks" }],
+    "beforeReadFile": [{ "command": "ask-me hooks" }],
+    "afterFileEdit": [{ "command": "ask-me hooks" }],
+    "beforeSubmitPrompt": [{ "command": "ask-me hooks" }],
+    "afterAgentThought": [{ "command": "ask-me hooks" }],
+    "afterAgentResponse": [{ "command": "ask-me hooks" }]
+  }
+}
+```
+
+### 审计日志格式
+
+```json
+{
+  "timestamp": "2025-12-21T12:53:56.334Z",
+  "hook_event": "beforeShellExecution",
+  "conversation_id": "abc123",
+  "generation_id": "gen456",
+  "model": "claude-3-sonnet",
+  "cursor_version": "0.1.7",
+  "command": "npm run build",
+  "duration": 1234
+}
 ```
 
 ## 故障排除

@@ -14,12 +14,12 @@ import { generateNewFileContent, appendToExistingFile, extractUserInput } from '
 import { validateInput } from '../input-validator.ts';
 import { spawnEditor } from '../editor.ts';
 
-// Remove pause file if exists (auto-resume on main command)
+// Remove pause signal file if exists (auto-resume on main command)
 function removePauseFile(cwd: string): void {
-  const pauseFile = join(cwd, '.cursor', 'pause');
-  if (existsSync(pauseFile)) {
+  const pauseSignalFile = join(cwd, '.cursor', '.pause-signal');
+  if (existsSync(pauseSignalFile)) {
     try {
-      unlinkSync(pauseFile);
+      unlinkSync(pauseSignalFile);
     } catch {
       // Ignore errors
     }

@@ -149,6 +149,15 @@ jobs:
 
             Interactive prompt tool for Cursor AI - continuous work loop
 
+            ---
+
+            **📖 Documentation Languages:**
+
+            - **English Version**: This document
+            - **中文版** (Chinese): [README.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/README.md)
+
+            ---
+
             ### 📦 Download Binaries
 
             | Platform | Architecture | Download |
@@ -171,6 +180,9 @@ jobs:
             ### ✨ Features
 
             - 🔄 Continuous work loop - Cursor AI interacts via ask-me
+            - ⏸️ **Smart pause mechanism** - Event-driven control based on Cursor Hooks
+            - 🪝 **Native hooks integration** - Monitor 9 Cursor events in real-time
+            - 📊 **Complete audit tracking** - Log all operations with timestamps
             - 📝 Markdown history - Archive sessions by project and date
             - ✏️ Multi-editor support - 15+ editors (VSCode, Cursor, Zed, Vim, etc.)
             - 🎯 Jump to line - Auto-focus input area
@@ -184,6 +196,13 @@ jobs:
             # Install and link
             bun install && bun link
 
+            # Initialize Cursor rules and hooks (recommended first step)
+            # Default: project-level hooks (affects current project only)
+            ask-me init
+
+            # For user-level hooks (affects all projects):
+            # ask-me init --hooks user
+
             # Run directly
             ask-me --cwd="/path/to/project" --title="Task done"
 
@@ -192,7 +211,51 @@ jobs:
 
             # Install compiled binary
             ./dist/macos-x64/ask-me install
+
+            # 🪝 Hooks Integration (Pause/Resume Control)
+            # Initialize hooks for pause functionality
+            ask-me init --hooks project   # Project-level (recommended)
+            # or
+            ask-me init --hooks user     # User-level (all projects)
+
+            # ⏸️ Pause AI execution
+            ask-me pause
+
+            # Check pause status
+            ask-me hooks --status        # Output: paused or running
+
+            # Resume AI execution
+            ask-me resume
+
+            # The AI will automatically detect pause state before operations
+            # and resume when you provide input via ask-me command
             ```
+
+            ### 🪝 How Hooks Integration Works
+
+            **Smart Configuration Merge**: ask-me automatically preserves your existing hooks and adds pause control with highest priority.
+
+            **Monitored Events**:
+            - **Before operations**: `beforeShellExecution`, `beforeMCPExecution`, `beforeReadFile` (pause check)
+            - **After operations**: `afterShellExecution`, `afterMCPExecution`, `afterFileEdit`, `afterAgentThought`, `afterAgentResponse` (audit logging)
+            - **Control**: `beforeSubmitPrompt` (auto-resume), `stop` (cleanup)
+
+            **Generated hooks.json**:
+            ```json
+            {
+              "hooks": {
+                "beforeShellExecution": [
+                  { "command": "ask-me hooks" },
+                  { "command": "your-existing-hook" }
+                ],
+                "afterShellExecution": [
+                  { "command": "ask-me hooks" }
+                ]
+              }
+            }
+            ```
+
+            **Audit Logging**: All operations are logged to `~/.ask-me/projects/{project}/{date}/hooks-audit.jsonl` for complete traceability.
 
             ### 🔧 Build from Source
 
@@ -205,6 +268,8 @@ jobs:
 
             ---
             Built with ❤️ using Bun + TypeScript
+
+            Special thanks to **Claude** (Anthropic) for intelligent development assistance and code architecture design.
 
           draft: false
           prerelease: false

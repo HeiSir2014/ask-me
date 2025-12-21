@@ -220,16 +220,118 @@ async function createSymlinkToBin(executablePath: string): Promise<{
   }
 }
 
+// Generate hooks configuration
+function generateHooksConfig(): any {
+  const hookCommand = { command: 'ask-me hooks' };
+  return {
+    version: 1,
+    hooks: {
+      beforeShellExecution: [hookCommand],
+      afterShellExecution: [hookCommand],
+      beforeMCPExecution: [hookCommand],
+      afterMCPExecution: [hookCommand],
+      beforeReadFile: [hookCommand],
+      afterFileEdit: [hookCommand],
+      beforeSubmitPrompt: [hookCommand],
+      afterAgentThought: [hookCommand],
+      afterAgentResponse: [hookCommand],
+    },
+  };
+}
+
+// Merge hooks configuration (ask-me hooks go first)
+function mergeHooksConfig(existing: any, askMeConfig: any): any {
+  const merged = { version: 1, hooks: {} };
+
+  // 合并每个 hook 事件（所有 ask-me 支持的 hooks）
+  const hookEvents = [
+    'beforeShellExecution',
+    'afterShellExecution',
+    'beforeMCPExecution',
+    'afterMCPExecution',
+    'beforeReadFile',
+    'afterFileEdit',
+    'beforeSubmitPrompt',
+    'afterAgentThought',
+    'afterAgentResponse',
+  ];
+
+  for (const event of hookEvents) {
+    const existingHooks = existing.hooks?.[event] || [];
+    const askMeHooks = askMeConfig.hooks?.[event] || [];
+
+    // ask-me 的 hooks 放在最前面，然后是现有的 hooks
+    merged.hooks[event] = [...askMeHooks, ...existingHooks];
+  }
+
+  return merged;
+}
+
+// 项目级安装（默认）
+async function installProjectLevelHooks(targetDir: string): Promise<void> {
+  const hooksDir = join(targetDir, '.cursor');
+  const hooksFile = join(hooksDir, 'hooks.json');
+
+  if (!existsSync(hooksDir)) {
+    mkdirSync(hooksDir, { recursive: true });
+  }
+
+  // 读取现有配置（如果存在）
+  let existingConfig: any = { version: 1, hooks: {} };
+  if (existsSync(hooksFile)) {
+    try {
+      existingConfig = JSON.parse(readFileSync(hooksFile, 'utf-8'));
+    } catch {
+      // 解析失败，使用默认配置
+    }
+  }
+
+  // 融合配置（ask-me 的 hooks 放在最前面）
+  const mergedConfig = mergeHooksConfig(existingConfig, generateHooksConfig());
+  writeFileSync(hooksFile, JSON.stringify(mergedConfig, null, 2), 'utf-8');
+
+  console.log(`  ${chalk.green('✓')} Installed project hooks: ${hooksFile}`);
+  console.log(`  ${chalk.dim('  → Scope: Project level (follows project)')}`);
+}
+
+// 用户级安装
+async function installUserLevelHooks(): Promise<void> {
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+  const hooksDir = join(homeDir, '.cursor');
+  const hooksFile = join(hooksDir, 'hooks.json');
+
+  if (!existsSync(hooksDir)) {
+    mkdirSync(hooksDir, { recursive: true });
+  }
+
+  // 读取现有配置（如果存在）
+  let existingConfig: any = { version: 1, hooks: {} };
+  if (existsSync(hooksFile)) {
+    try {
+      existingConfig = JSON.parse(readFileSync(hooksFile, 'utf-8'));
+    } catch {
+      // 解析失败，使用默认配置
+    }
+  }
+
+  // 融合配置（ask-me 的 hooks 放在最前面）
+  const mergedConfig = mergeHooksConfig(existingConfig, generateHooksConfig());
+  writeFileSync(hooksFile, JSON.stringify(mergedConfig, null, 2), 'utf-8');
+
+  console.log(`  ${chalk.green('✓')} Installed user hooks: ${hooksFile}`);
+  console.log(`  ${chalk.dim('  → Scope: User level (all projects)')}`);
+}
+
 // Handle init command - install Cursor rules to project
 export async function handleInitCommand(command: InitCommand): Promise<void> {
   const rulesDir = join(command.targetDir, '.cursor', 'rules');
   const targetPath = join(rulesDir, 'ask-me.mdc');
 
   console.log('');
-  console.log(chalk.bold('Initializing ask-me Cursor rules...'));
+  console.log(chalk.bold('Initializing ask-me Cursor rules and hooks...'));
   console.log('');
 
-  // Get the latest content
+  // 1. 安装 MDC 规则文件
   const latestContent = getAskMeMdcContent();
 
   // Check if file exists and compare content
@@ -237,37 +339,52 @@ export async function handleInitCommand(command: InitCommand): Promise<void> {
     const existingContent = readFileSync(targetPath, 'utf-8');
 
     if (existingContent === latestContent) {
-      console.log(`  ${chalk.green('✓')} Already up to date: ${targetPath}`);
-      console.log('');
-      console.log('  The AI agent will use continuous work loop.');
-      console.log('');
-      return;
+      console.log(`  ${chalk.green('✓')} MDC rules up to date: ${targetPath}`);
+    } else {
+      // Content differs - update the file
+      console.log(`  ${chalk.yellow('↻')} Updating outdated MDC rules...`);
+      writeFileSync(targetPath, latestContent, 'utf-8');
+      console.log(`  ${chalk.green('✓')} Updated MDC rules: ${targetPath}`);
     }
+  } else {
+    try {
+      // Create directory if needed
+      if (!existsSync(rulesDir)) {
+        mkdirSync(rulesDir, { recursive: true });
+      }
 
-    // Content differs - update the file
-    console.log(`  ${chalk.yellow('↻')} Updating outdated rules...`);
+      // Write the rules file
+      writeFileSync(targetPath, latestContent, 'utf-8');
+      console.log(`  ${chalk.green('✓')} Created MDC rules: ${targetPath}`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.log(`  ${chalk.red('✗')} Failed to create MDC rules: ${msg}`);
+    }
   }
 
-  try {
-    // Create directory if needed
-    if (!existsSync(rulesDir)) {
-      mkdirSync(rulesDir, { recursive: true });
+  // 2. 安装 hooks（除非跳过）
+  if (!command.skipHooks && command.hooksScope !== 'none') {
+    try {
+      if (command.hooksScope === 'user') {
+        await installUserLevelHooks();
+      } else {
+        await installProjectLevelHooks(command.targetDir);
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.log(`  ${chalk.red('✗')} Failed to install hooks: ${msg}`);
     }
-
-    // Write the rules file
-    writeFileSync(targetPath, latestContent, 'utf-8');
-
-    const action = existsSync(targetPath) ? 'Updated' : 'Created';
-    console.log(`  ${chalk.green('✓')} ${action}: ${targetPath}`);
-    console.log('');
-    console.log('  The AI agent will now use continuous work loop.');
-    console.log(`  Run ${chalk.cyan('ask-me --help')} for usage instructions.`);
-    console.log('');
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    console.log(`  ${chalk.red('✗')} Failed: ${msg}`);
-    console.log('');
   }
+
+  // 3. 显示完成信息
+  console.log('');
+  console.log(`${chalk.green('✓')} Initialization complete!`);
+  console.log('');
+  console.log('Next steps:');
+  console.log(`  1. Use ${chalk.cyan('ask-me pause')} to pause the AI agent`);
+  console.log(`  2. Use ${chalk.cyan('ask-me resume')} to continue`);
+  console.log(`  3. Run ${chalk.cyan('ask-me')} to start a session`);
+  console.log('');
 }
 
 // Silent install - try to install without any output

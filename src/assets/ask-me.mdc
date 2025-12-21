@@ -5,325 +5,13 @@ alwaysApply: true
 
 AI agent MUST use `ask-me` CLI to interact with user. NEVER wait for chat input. After completing any task, immediately call `ask-me` to get next instruction.
 
-## CRITICAL: Dynamic Pause File Detection
-
-### Core Concept
-
-The `.cursor/pause` file is a **real-time interrupt mechanism** that allows users to pause AI execution at ANY point during code generation/modification.
-
-### Detection Strategy
-
-**AI MUST check for `.cursor/pause` file continuously during execution**:
-
-```bash
-# Check pause file before EVERY significant operation
-check_pause() {
-  if [ -f .cursor/pause ]; then
-    # IMMEDIATELY stop current operation
-    # Call ask-me with PAUSED status
-    # ask-me will automatically delete .cursor/pause after user responds
-    return 1
-  fi
-  return 0
-}
-```
-
-### MANDATORY Check Points
-
-AI MUST check `.cursor/pause` at these critical moments:
-
-#### 1. Before Task Start
-```
-→ Check .cursor/pause
-→ If exists: PAUSE immediately, call ask-me
-→ If not exists: Proceed with task
-```
-
-#### 2. During Multi-File Operations
-```
-For each file in file_list:
-  → Check .cursor/pause
-  → If exists: STOP, save progress, call ask-me with PAUSED
-  → If not exists: Continue to next file
-```
-
-#### 3. During Large Code Generation
-```
-While generating code:
-  Every N lines (suggest N=50):
-    → Check .cursor/pause
-    → If exists: STOP generation, call ask-me
-    → Report: what was completed, what was in progress, what's remaining
-```
-
-#### 4. During Batch Refactoring
-```
-For each refactoring step:
-  → Check .cursor/pause before applying changes
-  → If exists: PAUSE, show completed steps, call ask-me
-```
-
-#### 5. After Each Subtask
-```
-Complete subtask → Check .cursor/pause
-If exists: PAUSE before next subtask
-```
-
-#### 6. Before Destructive Operations
-```
-Before: delete, overwrite, major refactor
-  → Check .cursor/pause
-  → If exists: ABORT operation, call ask-me
-```
-
-### Pause Detection Pattern
-
-```bash
-# AI should conceptually do this between operations:
-
-function do_work() {
-  # Step 1
-  check_pause_signal()
-  perform_operation_1()
-
-  # Step 2
-  check_pause_signal()
-  perform_operation_2()
-
-  # Step 3
-  check_pause_signal()
-  perform_operation_3()
-
-  # ... and so on
-}
-
-function check_pause_signal() {
-  if [ -f .cursor/pause ]; then
-    pause_and_ask_user()
-    exit 1  # Stop current work
-  fi
-}
-```
-
-### When User Creates `.cursor/pause`
-
-**Scenario**: AI is generating a large feature across 10 files. After file 3, user realizes the approach is wrong.
-
-```bash
-# User creates pause file
-touch .cursor/pause
-
-# AI detects it before processing file 4
-# AI immediately:
-1. STOPS all operations
-2. Saves current state
-3. Generates comprehensive PAUSED context
-4. Calls ask-me
-5. ask-me deletes .cursor/pause after user responds
-6. User corrects the approach
-7. AI resumes with corrected approach
-```
-
-### PAUSED Context Template
-
-When `.cursor/pause` is detected during execution:
-
-```yaml
-summary: 检测到用户暂停信号，已立即停止所有操作
-
-interrupt_point:
-  when: <在执行什么操作时被中断>
-  file: <正在处理的文件>
-  line: <如果在生成代码，生成到第几行>
-  operation: <具体操作: 读取/写入/生成/删除等>
-
-progress_snapshot:
-  total_files: <计划处理的总文件数>
-  completed_files: <已完成的文件数>
-    - path/to/file1.ts ✓
-    - path/to/file2.ts ✓
-  current_file: <正在处理的文件>
-    - path/to/file3.ts (50% completed)
-  pending_files: <待处理的文件数>
-    - path/to/file4.ts
-    - path/to/file5.ts
-
-code_generation_status:
-  generated_lines: <已生成的代码行数>
-  completion_percentage: <完成百分比>
-  last_completed_section: <最后完成的代码段>
-  in_progress_section: <正在进行的代码段>
-
-work_quality_check:
-  completed_work_status: <已完成的工作是否正确>
-  potential_issues: <用户可能想中断的原因>
-    - <可能的问题 1: 架构方向错误?>
-    - <可能的问题 2: 实现方式不对?>
-    - <可能的问题 3: 依赖选择有误?>
-  rollback_available: <是否可以回滚已完成的改动>
-
-state_preservation:
-  uncommitted_changes: <未提交的改动列表>
-  can_resume: <是否可以从当前点继续>
-  safe_rollback_point: <最近的安全回滚点>
-
-user_options:
-  1: 继续当前方案 (如果中断是误操作)
-  2: 回滚所有改动，重新规划
-  3: 保留已完成部分，修正后续方向
-  4: 查看已完成的代码进行评审
-  5: 详细说明问题和新方向
-  6: 其他指令
-```
 
 ## Core Rules
 
 ```
 NEVER stop and wait for chat input.
-ALWAYS check .cursor/pause dynamically during execution.
-ALWAYS call ask-me after completing work OR when pause detected.
+ALWAYS call ask-me after completing work.
 ALWAYS provide COMPLETE and DETAILED context.
-NEVER ignore .cursor/pause - it's a critical safety mechanism.
-```
-
-## Work Loop with Dynamic Pause Detection
-
-```
-loop {
-  1. Check .cursor/pause at loop start
-     → If exists: PAUSE, call ask-me with current state
-
-  2. Parse and plan current task
-     → Break into subtasks
-
-  3. For each subtask:
-       a. Check .cursor/pause before subtask
-       b. Execute subtask with periodic checks
-       c. Check .cursor/pause after subtask
-       → If detected at any point: PAUSE immediately
-
-  4. Generate COMPREHENSIVE context (all mandatory sections)
-
-  5. Check .cursor/pause before calling ask-me
-
-  6. Call ask-me with proper title + detailed context
-
-  7. Read user response from stdout
-
-  8. If response in [exit, quit, stop, bye] → break
-
-  9. If response is empty → call ask-me again
-
-  10. Parse response and prepare for execution → goto 1
-}
-```
-
-## Example: Large Feature Implementation with Pause Detection
-
-```
-Task: "Implement complete user authentication system with 8 files"
-
-AI Execution Flow:
-------------------
-
-[Check .cursor/pause] ✓ Not found
-→ Planning: Break into 8 files
-→ File 1: src/auth/jwt.service.ts
-
-[Check .cursor/pause] ✓ Not found
-→ Start generating File 1...
-→ Generated 50 lines...
-[Check .cursor/pause] ✓ Not found
-→ Generated 100 lines...
-[Check .cursor/pause] ✓ Not found
-→ Completed File 1 (156 lines)
-
-[Check .cursor/pause] ✓ Not found
-→ File 2: src/middleware/auth.ts
-
-[Check .cursor/pause] ✓ Not found
-→ Start generating File 2...
-→ Generated 50 lines...
-
-[Check .cursor/pause] ⚠️ FOUND! User created .cursor/pause
-→ STOP immediately
-→ Save state: File 1 complete, File 2 at 50/89 lines
-→ Generate PAUSED context
-→ Call ask-me:
-
-ask-me --cwd="$(pwd)" \
-  --title="PAUSED: 用户中断 - 认证系统实现进行到 2/8 文件" \
-  --context="summary: 检测到 .cursor/pause，已停止认证系统实现
-
-interrupt_point:
-  when: 生成 src/middleware/auth.ts 认证中间件时
-  file: src/middleware/auth.ts
-  line: 50 / 89 lines
-  operation: 正在编写 JWT 验证逻辑
-
-progress_snapshot:
-  total_files: 8
-  completed_files: 1
-    - src/auth/jwt.service.ts ✓ (156 lines)
-  current_file:
-    - src/middleware/auth.ts (50/89 lines, 56% completed)
-      已完成: imports, 基础结构, authenticateToken 函数
-      未完成: 角色权限检查, 错误处理
-  pending_files: 6
-    - src/routes/auth.ts
-    - src/models/user.model.ts
-    - src/services/user.service.ts
-    - src/validators/user.validator.ts
-    - tests/auth.test.ts
-    - tests/middleware.test.ts
-
-code_generation_status:
-  generated_lines: 206 total (156 + 50)
-  completion_percentage: 18% of total planned code
-  last_completed_section: JWT service with sign/verify methods
-  in_progress_section: Auth middleware - token verification
-
-work_quality_check:
-  completed_work_status: JWT service looks correct, using best practices
-  potential_issues:
-    - 用户可能发现: JWT 方案不适合当前项目?
-    - 用户可能发现: 应该使用 session-based auth?
-    - 用户可能发现: 缺少 OAuth2 集成?
-    - 用户可能发现: 中间件结构设计有问题?
-  rollback_available: 是 - 所有改动未提交
-
-state_preservation:
-  uncommitted_changes:
-    - src/auth/jwt.service.ts (new file, +156)
-    - src/middleware/auth.ts (new file, +50, incomplete)
-  can_resume: 是 - 可从 File 2 第 50 行继续
-  safe_rollback_point: 项目初始状态 (无任何改动)
-
-architectural_review:
-  current_approach: JWT-based stateless authentication
-  key_decisions_so_far:
-    - 使用 jsonwebtoken 库
-    - Access token (15min) + Refresh token (7days)
-    - bcrypt 密码哈希 (10 rounds)
-    - Middleware pattern for route protection
-  may_need_reconsideration:
-    - Token 存储位置 (cookie vs localStorage)
-    - 是否需要 token 黑名单机制
-    - 多设备登录策略
-
-user_options:
-  1: 继续当前 JWT 方案 (如果误触)
-  2: 切换到 session-based authentication
-  3: 添加 OAuth2 集成到当前方案
-  4: 重新设计中间件架构
-  5: 查看已生成的代码进行详细评审
-  6: 从头开始，使用不同的技术栈
-  7: 详细说明具体问题和期望的方向
-  8: 其他指令"
-
-→ ask-me deletes .cursor/pause
-→ User responds: "不要用 JWT，改用 Passport.js + session"
-→ AI: Rollback changes, restart with new approach
 ```
 
 ## Enhanced Context Generation Rules
@@ -341,7 +29,7 @@ user_options:
 - ✅ What dependencies and relationships exist
 - ✅ What potential impacts and risks are present
 - ✅ What follow-up work might be needed
-- ✅ At what point pause was detected (if PAUSED)
+- ✅ At what point execution was interrupted (if PAUSED)
 
 ### Mandatory Context Sections
 
@@ -414,11 +102,29 @@ suggestions:
   5: 其他请求
 ```
 
-#### For PAUSED State (Pause Detected)
+#### For PAUSED State (Execution Interrupted)
 
 ```yaml
-# Use the PAUSED context template shown above
-# Focus on: interrupt point, progress snapshot, state preservation
+summary: <描述当前状态和被中断的操作>
+
+interrupt_point:
+  when: <在执行什么操作时被中断>
+  file: <正在处理的文件>
+  operation: <具体操作类型>
+
+progress_snapshot:
+  completed: <已完成的工作>
+  in_progress: <正在进行的工作>
+  pending: <待完成的工作>
+
+state_preservation:
+  uncommitted_changes: <未提交的改动>
+  can_resume: <是否可以从当前点继续>
+
+user_options:
+  1: <继续当前方案>
+  2: <调整方向>
+  3: <其他选项>
 ```
 
 #### For CHOOSE/CONFIRM (Decision Points)
@@ -464,7 +170,7 @@ ask-me --cwd="$(pwd)" --title="<LABEL>: <action summary>" --context="<structured
 
 | Label | When to Use | Example |
 |-------|-------------|---------|
-| `PAUSED` | .cursor/pause detected | `PAUSED: 检测到中断 - 完成 3/10 文件` |
+| `PAUSED` | Execution interrupted by user | `PAUSED: 检测到中断 - 完成 3/10 文件` |
 | `DONE` | Task completed | `DONE: 实现了用户认证系统` |
 | `CHOOSE` | Need user decision | `CHOOSE: 数据库架构设计方案` |
 | `CONFIRM` | Need approval for risky action | `CONFIRM: 即将重构 15 个核心文件` |
@@ -483,7 +189,7 @@ ask-me --cwd="$(pwd)" --title="<LABEL>: <action summary>" --context="<structured
 
 | Trigger | Title Label | Context Requirements |
 |---------|-------------|---------------------|
-| .cursor/pause detected | `PAUSED` | Interrupt point, progress, state, options |
+| Execution interrupted by user | `PAUSED` | Interrupt point, progress, state, options |
 | Task completed | `DONE` | Full mandatory context (all 8 sections) |
 | Need user choice | `CHOOSE` | Deep analysis of options with implications |
 | Need approval for risky action | `CONFIRM` | Risk analysis, impact, rollback plan |
@@ -496,11 +202,6 @@ ask-me --cwd="$(pwd)" --title="<LABEL>: <action summary>" --context="<structured
 ## First Call (Session Start)
 
 ```bash
-# Check for .cursor/pause first
-if [ -f .cursor/pause ]; then
-  # Handle existing pause file
-fi
-
 ask-me --cwd="$(pwd)" \
   --title="READY: 持续工作模式已激活" \
   --context="summary: 智能上下文模式已启动，正在分析项目环境
@@ -524,12 +225,6 @@ capabilities:
   - 架构设计和评审
   - 测试策略规划
   - 性能和安全分析
-
-pause_control:
-  info: 可随时创建 .cursor/pause 文件紧急停止工作
-  command: touch .cursor/pause
-  detection: AI 在执行过程中会持续检测此文件
-  use_case: 当发现 AI 方向错误时立即中断
 
 suggestions:
   1: <基于项目状态的智能建议 1>
@@ -563,33 +258,21 @@ ask-me --cwd="$(pwd)" \
 # Only proceed if user confirms
 ```
 
-### Auto-Execute with Pause Detection
-
-These operations can auto-execute BUT must check `.cursor/pause` frequently:
-
-- Code generation (check every 50 lines)
-- Multi-file edits (check before each file)
-- Refactoring (check before each step)
-- Test writing (check before each test file)
-
 ## Prohibited Behaviors
 
 | Never Do This | Why |
 |---------------|-----|
 | Output "还有什么需要帮助的吗?" | Signals waiting - use ask-me instead |
 | Wait for chat input | All input via ask-me only |
-| Ignore .cursor/pause file | Critical safety mechanism |
-| Check pause only at start | Must check dynamically during execution |
-| Continue after detecting pause | Must pause immediately |
 | Skip PAUSED context details | User needs to know exact state |
 
 ## Allowed Behaviors
 
 | Can Do | Note |
 |--------|------|
-| Auto-execute safe operations | With continuous pause detection |
-| Generate large code blocks | With periodic pause checks (every 50 lines) |
-| Multi-file operations | Check pause before each file |
+| Auto-execute safe operations | With proper context tracking |
+| Generate large code blocks | With comprehensive progress reporting |
+| Multi-file operations | With detailed state management |
 | Proactive issue reporting | With comprehensive analysis |
 
 ## Special User Responses
@@ -597,9 +280,6 @@ These operations can auto-execute BUT must check `.cursor/pause` frequently:
 | User Response | Action |
 |---------------|--------|
 | `exit` / `quit` / `stop` / `bye` | End loop gracefully |
-| `continue` / `继续` / `go` | Resume or proceed with top suggestion |
-| `rollback` / `回滚` | Undo recent changes |
-| `pause` / `暂停` | Create .cursor/pause and pause |
 | Any other text | Parse as new instruction |
 
 ## Error Recovery
@@ -626,28 +306,29 @@ state:
   data_integrity: <数据完整性状态>
 ```
 
-## Context Intelligence Levels
+## Context Intelligence Guidelines
 
-| Task Complexity | Context Lines | Check Pause Frequency |
-|----------------|---------------|----------------------|
-| Trivial (typo) | 10-20 | Once before + once after |
-| Simple (1 file) | 20-50 | Before + after file |
-| Medium (3-5 files) | 50-100 | Before each file |
-| Complex (5-10 files) | 100-200 | Before each file + every 50 lines |
-| Large (10+ files) | 200+ | Before each file + every 30 lines |
+根据任务复杂度调整上下文详细程度：
+
+| Task Complexity | Expected Context Detail | Focus Areas |
+|----------------|------------------------|-------------|
+| Trivial (typo) | Minimal (10-20 lines) | Quick fix explanation |
+| Simple (1 file) | Standard (20-50 lines) | Changes and rationale |
+| Medium (3-5 files) | Detailed (50-100 lines) | File relationships, impact |
+| Complex (5-10 files) | Comprehensive (100-200 lines) | Architecture, dependencies |
+| Large (10+ files) | Extensive (200+ lines) | Full system analysis, roadmap |
 
 ---
 
-## Summary: The Pause Detection Philosophy
+## Summary: Continuous Work Philosophy
 
 **Traditional AI**: Completes entire task → presents result → user finds issues → must redo
 
-**With `.cursor/pause`**:
+**With ask-me continuous mode**:
 - User watches AI work in real-time
 - Spots wrong direction early (e.g., after 2 files out of 10)
-- Creates `.cursor/pause` file
-- AI stops immediately at next checkpoint
-- Provides detailed state: what's done, what's in progress
+- AI stops immediately and provides detailed state
+- Provides comprehensive context: what's done, what's in progress
 - User corrects direction
 - AI resumes with correct approach
 - **Saves time by catching errors early**
@@ -655,10 +336,8 @@ state:
 **Key Principle**: Prevention is better than correction. Let users intervene DURING execution, not just AFTER completion.
 
 **Remember**:
-- Check `.cursor/pause` at EVERY significant operation
-- PAUSE immediately when detected
-- Provide detailed progress snapshot
-- ask-me will delete the file
+- Provide detailed progress snapshot when interrupted
+- Include comprehensive context for user decision-making
 - Resume with user guidance
 
 Only fully stop when user says `exit`/`quit`/`stop`/`bye`.
