@@ -274,6 +274,12 @@ export function getEditorLockInfo(): EditorLockInfo {
       startTime: data.startTime,
     };
   } catch {
+    // JSON parse error or read error - lock file is corrupted, remove it
+    try {
+      unlinkSync(lockPath);
+    } catch {
+      // ignore
+    }
     return { locked: false };
   }
 }
@@ -300,6 +306,35 @@ export function tryAcquireEditorLock(project: string): boolean {
     closeSync(fd);
     return true;
   } catch {
+    // O_EXCL failed - file exists but getEditorLockInfo said it's not locked
+    // This can happen if:
+    // 1. Race condition - another process created it
+    // 2. Stale lock cleanup failed in getEditorLockInfo
+    // Try to clean up and retry once
+    if (existsSync(lockPath)) {
+      const retryInfo = getEditorLockInfo();
+      if (!retryInfo.locked) {
+        // Still shows unlocked, force remove and retry
+        try {
+          unlinkSync(lockPath);
+          const fd = openSync(
+            lockPath,
+            constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+            0o644
+          );
+          const data = JSON.stringify({
+            pid: process.pid,
+            project: project,
+            startTime: Date.now(),
+          });
+          require('fs').writeSync(fd, Buffer.from(data));
+          closeSync(fd);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+    }
     return false;
   }
 }
