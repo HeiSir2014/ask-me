@@ -7,6 +7,10 @@ import {
   mkdirSync,
   readdirSync,
   renameSync,
+  openSync,
+  closeSync,
+  constants,
+  statSync,
 } from 'fs';
 import { getFilesDir, ensureConfigDir } from './config.ts';
 import { getTodayDate, normalizeCwdPath } from './utils/index.ts';
@@ -14,6 +18,69 @@ import { getTodayDate, normalizeCwdPath } from './utils/index.ts';
 // Simple file locking to prevent concurrent access
 const LOCK_TIMEOUT_MS = 30000; // 30 seconds
 const LOCK_RETRY_MS = 100; // 100ms between retries
+const STALE_LOCK_MS = 60000; // 60 seconds - consider lock stale if older
+
+// Check if a process is still running
+function isProcessRunning(pid: number): boolean {
+  try {
+    // Sending signal 0 checks if process exists without killing it
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Try to acquire lock atomically
+function tryAtomicLock(lockPath: string): boolean {
+  try {
+    // O_CREAT | O_EXCL ensures atomic creation - fails if file exists
+    const fd = openSync(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o644);
+    // Write our PID
+    const buffer = Buffer.from(String(process.pid));
+    require('fs').writeSync(fd, buffer);
+    closeSync(fd);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Check if lock is stale (process dead or lock too old)
+function isLockStale(lockPath: string): boolean {
+  try {
+    if (!existsSync(lockPath)) {
+      return true;
+    }
+
+    // Read PID from lock file
+    const content = readFileSync(lockPath, 'utf-8').trim();
+    const pid = parseInt(content, 10);
+
+    // If PID is valid, check if process is still running
+    if (!isNaN(pid) && pid > 0) {
+      if (!isProcessRunning(pid)) {
+        return true; // Process is dead, lock is stale
+      }
+    }
+
+    // Check lock age as fallback
+    try {
+      const stats = statSync(lockPath);
+      const lockAge = Date.now() - stats.mtimeMs;
+      if (lockAge > STALE_LOCK_MS) {
+        return true;
+      }
+    } catch {
+      // If we can't stat, consider stale
+      return true;
+    }
+
+    return false;
+  } catch {
+    return true;
+  }
+}
 
 // Acquire a lock file
 async function acquireLock(path: string): Promise<string> {
@@ -21,28 +88,26 @@ async function acquireLock(path: string): Promise<string> {
   const startTime = Date.now();
 
   while (Date.now() - startTime < LOCK_TIMEOUT_MS) {
-    try {
-      // Try to create lock file exclusively
-      if (!existsSync(lockPath)) {
-        writeFileSync(lockPath, String(process.pid), { flag: 'wx' });
-        return lockPath;
-      }
-
-      // Check if lock is stale (older than timeout)
-      const stats = Bun.file(lockPath);
-      const lockAge = Date.now() - (await stats.lastModified);
-      if (lockAge > LOCK_TIMEOUT_MS) {
-        // Remove stale lock
-        unlinkSync(lockPath);
-        continue;
-      }
-
-      // Wait and retry
-      await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
-    } catch {
-      // Error creating lock, retry
-      await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
+    // First, try atomic lock creation
+    if (tryAtomicLock(lockPath)) {
+      return lockPath;
     }
+
+    // Lock exists - check if it's stale
+    if (isLockStale(lockPath)) {
+      try {
+        unlinkSync(lockPath);
+        // Try again immediately after removing stale lock
+        if (tryAtomicLock(lockPath)) {
+          return lockPath;
+        }
+      } catch {
+        // Another process might have removed it, continue
+      }
+    }
+
+    // Wait and retry
+    await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
   }
 
   throw new Error(`Failed to acquire lock for ${path} after ${LOCK_TIMEOUT_MS}ms`);
@@ -157,4 +222,221 @@ export function countLines(content: string): number {
     return 0;
   }
   return content.split('\n').length;
+}
+
+// ============================================
+// Global Editor Lock (for concurrent usage)
+// ============================================
+
+const EDITOR_LOCK_TIMEOUT_MS = 300000; // 5 minutes max wait for editor lock
+const EDITOR_LOCK_RETRY_MS = 500; // 500ms between retries
+
+// Get global editor lock file path
+export function getEditorLockPath(): string {
+  ensureConfigDir();
+  return join(getFilesDir(), 'editor.lock');
+}
+
+// Get editor lock info (which project is using the editor)
+export interface EditorLockInfo {
+  locked: boolean;
+  pid?: number;
+  project?: string;
+  startTime?: number;
+}
+
+export function getEditorLockInfo(): EditorLockInfo {
+  const lockPath = getEditorLockPath();
+  if (!existsSync(lockPath)) {
+    return { locked: false };
+  }
+
+  try {
+    const content = readFileSync(lockPath, 'utf-8');
+    const data = JSON.parse(content);
+    const pid = data.pid;
+
+    // Check if process is still running
+    if (pid && !isProcessRunning(pid)) {
+      // Process is dead, lock is stale
+      try {
+        unlinkSync(lockPath);
+      } catch {
+        // ignore
+      }
+      return { locked: false };
+    }
+
+    return {
+      locked: true,
+      pid: data.pid,
+      project: data.project,
+      startTime: data.startTime,
+    };
+  } catch {
+    return { locked: false };
+  }
+}
+
+// Try to acquire editor lock (returns true if acquired, false if busy)
+export function tryAcquireEditorLock(project: string): boolean {
+  const lockPath = getEditorLockPath();
+
+  // Check if already locked by another process
+  const info = getEditorLockInfo();
+  if (info.locked) {
+    return false;
+  }
+
+  // Try to acquire atomically
+  try {
+    const fd = openSync(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o644);
+    const data = JSON.stringify({
+      pid: process.pid,
+      project: project,
+      startTime: Date.now(),
+    });
+    require('fs').writeSync(fd, Buffer.from(data));
+    closeSync(fd);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Acquire editor lock with wait (blocks until acquired or timeout)
+export async function acquireEditorLock(project: string): Promise<boolean> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < EDITOR_LOCK_TIMEOUT_MS) {
+    if (tryAcquireEditorLock(project)) {
+      return true;
+    }
+
+    // Check if current lock is stale
+    const info = getEditorLockInfo();
+    if (!info.locked) {
+      continue; // Lock was released or stale, try again immediately
+    }
+
+    // Wait and retry
+    await new Promise((resolve) => setTimeout(resolve, EDITOR_LOCK_RETRY_MS));
+  }
+
+  return false;
+}
+
+// Release editor lock
+export function releaseEditorLock(): void {
+  const lockPath = getEditorLockPath();
+  try {
+    if (existsSync(lockPath)) {
+      // Only release if we own the lock
+      const content = readFileSync(lockPath, 'utf-8');
+      const data = JSON.parse(content);
+      if (data.pid === process.pid) {
+        unlinkSync(lockPath);
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+}
+
+// Execute function with editor lock
+export async function withEditorLock<T>(
+  project: string,
+  fn: () => T | Promise<T>,
+  options?: { skipIfBusy?: boolean }
+): Promise<{ result: T; skipped: false } | { skipped: true; busyProject: string }> {
+  // Check if editor is busy and we should skip
+  if (options?.skipIfBusy) {
+    const info = getEditorLockInfo();
+    if (info.locked) {
+      return { skipped: true, busyProject: info.project || 'unknown' };
+    }
+  }
+
+  // Try to acquire lock
+  if (!tryAcquireEditorLock(project)) {
+    // Lock is busy, either wait or return based on options
+    if (options?.skipIfBusy) {
+      const info = getEditorLockInfo();
+      return { skipped: true, busyProject: info.project || 'unknown' };
+    }
+
+    // Wait for lock
+    const acquired = await acquireEditorLock(project);
+    if (!acquired) {
+      const info = getEditorLockInfo();
+      return { skipped: true, busyProject: info.project || 'unknown' };
+    }
+  }
+
+  try {
+    const result = await fn();
+    return { result, skipped: false };
+  } finally {
+    releaseEditorLock();
+  }
+}
+
+// ============================================
+// Global Mute Signal
+// ============================================
+
+// Get global mute signal file path
+export function getMuteSignalPath(): string {
+  ensureConfigDir();
+  return join(getFilesDir(), 'mute-signal');
+}
+
+// Check if muted
+export function isMuted(): boolean {
+  return existsSync(getMuteSignalPath());
+}
+
+// Get mute info
+export interface MuteInfo {
+  muted: boolean;
+  timestamp?: string;
+  reason?: string;
+}
+
+export function getMuteInfo(): MuteInfo {
+  const mutePath = getMuteSignalPath();
+  if (!existsSync(mutePath)) {
+    return { muted: false };
+  }
+
+  try {
+    const content = readFileSync(mutePath, 'utf-8');
+    const data = JSON.parse(content);
+    return {
+      muted: true,
+      timestamp: data.timestamp,
+      reason: data.reason,
+    };
+  } catch {
+    return { muted: true };
+  }
+}
+
+// Set mute
+export function setMute(reason?: string): void {
+  const mutePath = getMuteSignalPath();
+  const data = {
+    timestamp: new Date().toISOString(),
+    reason: reason || 'Muted by user',
+    pid: process.pid,
+  };
+  writeFileSync(mutePath, JSON.stringify(data, null, 2), 'utf-8');
+}
+
+// Clear mute
+export function clearMute(): void {
+  const mutePath = getMuteSignalPath();
+  if (existsSync(mutePath)) {
+    unlinkSync(mutePath);
+  }
 }

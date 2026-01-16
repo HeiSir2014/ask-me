@@ -134,6 +134,11 @@ export interface PauseCommand {
   targetDir: string; // PWD where .cursor/.pause-signal will be created
 }
 
+// Mute command (global, affects all projects)
+export interface MuteCommand {
+  status?: boolean; // Show status only
+}
+
 // CLI command union type
 export type CLICommand =
   | { type: 'main'; options: CLIOptions }
@@ -143,6 +148,8 @@ export type CLICommand =
   | { type: 'history'; command: HistoryCommand }
   | { type: 'pause'; command: PauseCommand }
   | { type: 'resume'; command: PauseCommand }
+  | { type: 'mute'; command: MuteCommand }
+  | { type: 'unmute' }
   | { type: 'hooks'; command: HooksCommand }
   | { type: 'config' };
 

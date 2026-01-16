@@ -4,6 +4,11 @@ import { handleMainCommand } from './commands/main.ts';
 import { handleEditorCommand } from './commands/editor.ts';
 import { handleHistoryCommand } from './commands/history.ts';
 import { handlePauseCommand, handleResumeCommand } from './commands/pause.ts';
+import {
+  handleMuteCommand,
+  handleUnmuteCommand,
+  handleMuteStatusCommand,
+} from './commands/mute.ts';
 import { handleConfigCommand } from './commands/config.ts';
 import { handleInitCommand, handleInstallCommand, trySilentInstall } from './commands/install.ts';
 import { handleHooksCommand } from './commands/hooks.ts';
@@ -42,6 +47,16 @@ async function main() {
         break;
       case 'resume':
         handleResumeCommand(command.command);
+        break;
+      case 'mute':
+        if (command.command.status) {
+          handleMuteStatusCommand();
+        } else {
+          handleMuteCommand();
+        }
+        break;
+      case 'unmute':
+        handleUnmuteCommand();
         break;
       case 'hooks':
         handleHooksCommand(command.command);
