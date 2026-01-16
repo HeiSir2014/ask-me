@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
-import type { CLICommand, CLIOptions, HistoryCommand, PauseCommand } from './types.ts';
+import type { CLICommand, CLIOptions, HistoryCommand, PauseCommand, MuteCommand } from './types.ts';
 import { getPresetNames } from './editors/presets.ts';
 import pkg from '../package.json';
 
@@ -44,14 +44,18 @@ function formatHelp(cmd: Command): string {
     }
   }
 
-  // Add pause usage hint for main help
+  // Add pause/mute usage hint for main help
   if (name === 'ask-me') {
     output += '\n';
-    output += `${chalk.bold('Pause/Resume:')}\n`;
+    output += `${chalk.bold('Pause/Resume (per-project):')}\n`;
     output += `  ${chalk.cyan('ask-me pause')}   Stop AI agent immediately (create .cursor/.pause-signal)\n`;
     output += `  ${chalk.cyan('ask-me resume')}  Continue AI agent (remove .cursor/.pause-signal)\n`;
     output += `  ${chalk.dim('Note: AI agent checks .cursor/.pause-signal before each operation')}\n`;
-    output += `  ${chalk.dim('      Running ask-me main command auto-removes pause signal')}\n`;
+    output += '\n';
+    output += `${chalk.bold('Mute/Unmute (global):')}\n`;
+    output += `  ${chalk.cyan('ask-me mute')}    Skip editor, auto-output "continue" after timeout\n`;
+    output += `  ${chalk.cyan('ask-me unmute')}  Restore normal editor behavior\n`;
+    output += `  ${chalk.dim('Note: Mute affects ALL projects globally')}\n`;
   }
 
   output += '\n';
@@ -194,6 +198,26 @@ function createProgram(): Command {
         type: 'resume',
         command: { targetDir: process.cwd() },
       };
+    });
+
+  // Mute subcommand (global)
+  program
+    .command('mute')
+    .description('Enable global mute mode (skip editor, auto-continue after timeout)')
+    .option('--status', 'Show current mute status')
+    .action((opts) => {
+      parsedCommand = {
+        type: 'mute',
+        command: { status: opts.status },
+      };
+    });
+
+  // Unmute subcommand (global)
+  program
+    .command('unmute')
+    .description('Disable global mute mode (restore normal editor behavior)')
+    .action(() => {
+      parsedCommand = { type: 'unmute' };
     });
 
   // Hooks subcommand
