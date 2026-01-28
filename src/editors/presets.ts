@@ -29,12 +29,11 @@ const EDITOR_PRESETS: EditorPreset[] = [
     description: 'VS Code Insiders',
     platforms: ['win32', 'darwin', 'linux'],
   },
-  // Zed: zed -r -w file:line:column (supports -r and -w)
-  // Use large column number to position cursor at end of line
+  // Zed: zed -r -w file:line (supports -r and -w)
   {
     name: 'zed',
     command: 'zed -r -w',
-    gotoFormat: '{file}:{line}:999',
+    gotoFormat: '{file}:{line}',
     description: 'Zed Editor',
     platforms: ['win32', 'darwin', 'linux'],
   },

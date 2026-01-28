@@ -22,14 +22,18 @@ export async function spawnEditor(
   const args = buildEditorCommand(command, gotoFormat, file, line);
   const [cmd, ...cmdArgs] = args;
 
+  console.log(`Run Editor Command: ${args.join(' ')}`);
+
   if (!cmd) {
     throw new Error('Editor command is empty');
   }
 
   try {
-    // Spawn editor process
+    // Spawn editor process (suppress stdout/stderr to avoid polluting ask-me console)
     const proc = Bun.spawn([cmd, ...cmdArgs], {
-      stdio: ['inherit', 'inherit', 'inherit'],
+      stdin: 'inherit',
+      stdout: 'ignore',
+      stderr: 'ignore',
     });
 
     // Race between process exit and timeout
