@@ -22,7 +22,7 @@ export async function spawnEditor(
   const args = buildEditorCommand(command, gotoFormat, file, line);
   const [cmd, ...cmdArgs] = args;
 
-  console.log(`Run Editor Command: ${args.join(' ')}`);
+  // console.log(`Run Editor Command: ${args.join(' ')}`);
 
   if (!cmd) {
     throw new Error('Editor command is empty');
