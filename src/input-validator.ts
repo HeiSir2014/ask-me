@@ -2,16 +2,10 @@ import type { ValidationResult } from './types.ts';
 import { DEFAULT_TIMEOUT_MINUTES } from './types.ts';
 import { isInputEmpty } from './template.ts';
 
-// Quick exit reminder message (< timeout minutes)
-function getQuickExitMessage(): string {
-  return `
-To continue the workflow, run ask-me again and enter your response.`;
-}
-
-// Timeout reminder message (>= timeout minutes, editor auto-closed)
-function getTimeoutReminderMessage(timeoutMinutes: number): string {
-  return `
-To continue the workflow, the AI agent will call ask-me again.`;
+// Unified reminder message for AI agent
+export function getAskMeReminderMessage(): string {
+  return `ACTION REQUIRED: You MUST call ask-me again to continue.
+DO NOT assume this is a loop - always call ask-me.`;
 }
 
 // Validate user input and determine appropriate response
@@ -34,20 +28,11 @@ export function validateInput(
     };
   }
 
-  // Empty input - determine which message to show
-  if (isTimeout) {
-    return {
-      isValid: false,
-      isEmpty: true,
-      isTimeout: true,
-      message: getTimeoutReminderMessage(timeoutMinutes),
-    };
-  }
-
+  // Empty input - always show the same reminder message
   return {
     isValid: false,
     isEmpty: true,
-    isTimeout: false,
-    message: getQuickExitMessage(),
+    isTimeout,
+    message: getAskMeReminderMessage(),
   };
 }

@@ -7,9 +7,6 @@ import {
   mkdirSync,
   readdirSync,
   renameSync,
-  openSync,
-  closeSync,
-  constants,
   statSync,
 } from 'fs';
 import { getFilesDir, ensureConfigDir } from './config.ts';
@@ -32,14 +29,11 @@ function isProcessRunning(pid: number): boolean {
 }
 
 // Try to acquire lock atomically
+// Note: Uses writeFileSync with 'wx' flag instead of openSync with O_EXCL due to Bun bug on Windows
 function tryAtomicLock(lockPath: string): boolean {
   try {
-    // O_CREAT | O_EXCL ensures atomic creation - fails if file exists
-    const fd = openSync(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o644);
-    // Write our PID
-    const buffer = Buffer.from(String(process.pid));
-    require('fs').writeSync(fd, buffer);
-    closeSync(fd);
+    // 'wx' flag ensures atomic creation - fails if file exists
+    writeFileSync(lockPath, String(process.pid), { flag: 'wx', mode: 0o644 });
     return true;
   } catch {
     return false;
@@ -245,6 +239,12 @@ export interface EditorLockInfo {
   startTime?: number;
 }
 
+// Result type for tryAcquireEditorLock - distinguishes between "busy" and "error"
+export type AcquireLockResult =
+  | { acquired: true }
+  | { acquired: false; busy: true; holder: EditorLockInfo }
+  | { acquired: false; busy: false; error: string };
+
 export function getEditorLockInfo(): EditorLockInfo {
   const lockPath = getEditorLockPath();
   if (!existsSync(lockPath)) {
@@ -284,58 +284,53 @@ export function getEditorLockInfo(): EditorLockInfo {
   }
 }
 
-// Try to acquire editor lock (returns true if acquired, false if busy)
-export function tryAcquireEditorLock(project: string): boolean {
+// Try to acquire editor lock - returns detailed result
+// Note: Uses writeFileSync with 'wx' flag instead of openSync with O_EXCL due to Bun bug on Windows
+export function tryAcquireEditorLock(project: string): AcquireLockResult {
   const lockPath = getEditorLockPath();
 
   // Check if already locked by another process
   const info = getEditorLockInfo();
   if (info.locked) {
-    return false;
+    return { acquired: false, busy: true, holder: info };
   }
 
-  // Try to acquire atomically
+  // Try to acquire atomically using writeFileSync with 'wx' flag (exclusive create)
+  const lockData = JSON.stringify({
+    pid: process.pid,
+    project: project,
+    startTime: Date.now(),
+  });
+
   try {
-    const fd = openSync(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o644);
-    const data = JSON.stringify({
-      pid: process.pid,
-      project: project,
-      startTime: Date.now(),
-    });
-    require('fs').writeSync(fd, Buffer.from(data));
-    closeSync(fd);
-    return true;
-  } catch {
-    // O_EXCL failed - file exists but getEditorLockInfo said it's not locked
-    // This can happen if:
-    // 1. Race condition - another process created it
-    // 2. Stale lock cleanup failed in getEditorLockInfo
-    // Try to clean up and retry once
+    writeFileSync(lockPath, lockData, { flag: 'wx', mode: 0o644 });
+    return { acquired: true };
+  } catch (err) {
+    // 'wx' failed - file exists or other error
+    // Check if another process has the lock
     if (existsSync(lockPath)) {
       const retryInfo = getEditorLockInfo();
-      if (!retryInfo.locked) {
-        // Still shows unlocked, force remove and retry
-        try {
-          unlinkSync(lockPath);
-          const fd = openSync(
-            lockPath,
-            constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
-            0o644
-          );
-          const data = JSON.stringify({
-            pid: process.pid,
-            project: project,
-            startTime: Date.now(),
-          });
-          require('fs').writeSync(fd, Buffer.from(data));
-          closeSync(fd);
-          return true;
-        } catch {
-          return false;
+      if (retryInfo.locked) {
+        // Another process acquired the lock
+        return { acquired: false, busy: true, holder: retryInfo };
+      }
+      // Still shows unlocked, force remove and retry
+      try {
+        unlinkSync(lockPath);
+        writeFileSync(lockPath, lockData, { flag: 'wx', mode: 0o644 });
+        return { acquired: true };
+      } catch (retryErr) {
+        // Check one more time if another process got the lock
+        const finalInfo = getEditorLockInfo();
+        if (finalInfo.locked) {
+          return { acquired: false, busy: true, holder: finalInfo };
         }
+        const errMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+        return { acquired: false, busy: false, error: `Failed to create lock file: ${errMsg}` };
       }
     }
-    return false;
+    const errMsg = err instanceof Error ? err.message : String(err);
+    return { acquired: false, busy: false, error: `Failed to create lock file: ${errMsg}` };
   }
 }
 
@@ -344,14 +339,14 @@ export async function acquireEditorLock(project: string): Promise<boolean> {
   const startTime = Date.now();
 
   while (Date.now() - startTime < EDITOR_LOCK_TIMEOUT_MS) {
-    if (tryAcquireEditorLock(project)) {
+    const result = tryAcquireEditorLock(project);
+    if (result.acquired) {
       return true;
     }
 
-    // Check if current lock is stale
-    const info = getEditorLockInfo();
-    if (!info.locked) {
-      continue; // Lock was released or stale, try again immediately
+    // If it's an error (not busy), retry immediately
+    if (!result.busy) {
+      continue;
     }
 
     // Wait and retry
@@ -384,27 +379,31 @@ export async function withEditorLock<T>(
   fn: () => T | Promise<T>,
   options?: { skipIfBusy?: boolean }
 ): Promise<{ result: T; skipped: false } | { skipped: true; busyProject: string }> {
-  // Check if editor is busy and we should skip
-  if (options?.skipIfBusy) {
-    const info = getEditorLockInfo();
-    if (info.locked) {
-      return { skipped: true, busyProject: info.project || 'unknown' };
-    }
-  }
-
   // Try to acquire lock
-  if (!tryAcquireEditorLock(project)) {
-    // Lock is busy, either wait or return based on options
-    if (options?.skipIfBusy) {
-      const info = getEditorLockInfo();
-      return { skipped: true, busyProject: info.project || 'unknown' };
-    }
+  const lockResult = tryAcquireEditorLock(project);
 
-    // Wait for lock
-    const acquired = await acquireEditorLock(project);
-    if (!acquired) {
-      const info = getEditorLockInfo();
-      return { skipped: true, busyProject: info.project || 'unknown' };
+  if (!lockResult.acquired) {
+    if (lockResult.busy) {
+      // Lock is held by another process
+      if (options?.skipIfBusy) {
+        return { skipped: true, busyProject: lockResult.holder.project || 'unknown' };
+      }
+      // Wait for lock
+      const acquired = await acquireEditorLock(project);
+      if (!acquired) {
+        const info = getEditorLockInfo();
+        return { skipped: true, busyProject: info.project || 'unknown' };
+      }
+    } else {
+      // Error acquiring lock, skip if allowed
+      if (options?.skipIfBusy) {
+        return { skipped: true, busyProject: `error: ${lockResult.error}` };
+      }
+      // Wait and retry
+      const acquired = await acquireEditorLock(project);
+      if (!acquired) {
+        return { skipped: true, busyProject: 'unknown (failed to acquire)' };
+      }
     }
   }
 

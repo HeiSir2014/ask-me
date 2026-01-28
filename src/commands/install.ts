@@ -546,18 +546,31 @@ export async function handleInstallCommand(): Promise<void> {
       console.log('');
 
       if (process.platform === 'darwin') {
-        console.log(`    ${chalk.cyan(`echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`)}`);
+        // Check if already exists before adding (avoid duplicates)
+        console.log(
+          `    ${chalk.cyan(`grep -q '.local/bin' ~/.zshrc || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`)}`
+        );
         console.log(`    ${chalk.cyan('source ~/.zshrc')}`);
       } else if (process.platform === 'linux') {
+        // Check if already exists before adding (avoid duplicates)
         console.log(
-          `    ${chalk.cyan(`echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc`)}`
+          `    ${chalk.cyan(`grep -q '.local/bin' ~/.bashrc || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc`)}`
         );
         console.log(`    ${chalk.cyan('source ~/.bashrc')}`);
       } else {
-        // Windows - add to user PATH via PowerShell
+        // Windows - add to user PATH via PowerShell (check if exists first to avoid duplicates)
         console.log(
-          `    ${chalk.cyan(`[Environment]::SetEnvironmentVariable("PATH", "$env:PATH;${userBinDir}", "User")`)}`
+          `    ${chalk.cyan(`$userPath = [Environment]::GetEnvironmentVariable("PATH", "User")`)}`
         );
+        console.log(
+          `    ${chalk.cyan(`if (-not $userPath.Contains("${userBinDir.replace(/\\/g, '\\\\')}")) {`)}`
+        );
+        console.log(
+          `    ${chalk.cyan(`  [Environment]::SetEnvironmentVariable("PATH", "$userPath;${userBinDir}", "User")`)}`
+        );
+        console.log(`    ${chalk.cyan('}')}`);
+        console.log('');
+        console.log(`    ${chalk.dim('Then restart your terminal to apply changes.')}`);
       }
       console.log('');
     }
@@ -593,10 +606,11 @@ export async function handleInstallCommand(): Promise<void> {
     console.log('');
 
     if (process.platform !== 'win32') {
-      console.log('  Then add to PATH:');
+      console.log('  Then add to PATH (if not already):');
       console.log('');
+      const rcFile = process.platform === 'darwin' ? 'zshrc' : 'bashrc';
       console.log(
-        `    ${chalk.cyan(`echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.${process.platform === 'darwin' ? 'zshrc' : 'bashrc'}`)}`
+        `    ${chalk.cyan(`grep -q '.local/bin' ~/.${rcFile} || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.${rcFile}`)}`
       );
       console.log('');
     }
