@@ -1,6 +1,5 @@
 import { join } from 'path';
 import { existsSync, unlinkSync } from 'fs';
-import chalk from 'chalk';
 import type { CLIOptions } from '../types.ts';
 import { getCurrentEditor, getTimeoutMinutes } from '../config.ts';
 import {
@@ -11,15 +10,13 @@ import {
   withFileLock,
   archiveOldSessions,
   isMuted,
-  getMuteInfo,
-  getEditorLockInfo,
   tryAcquireEditorLock,
   releaseEditorLock,
   acquireEditorLock,
   mapCwdToDirName,
 } from '../file-manager.ts';
 import { generateNewFileContent, appendToExistingFile, extractUserInput } from '../template.ts';
-import { validateInput } from '../input-validator.ts';
+import { validateInput, getAskMeReminderMessage } from '../input-validator.ts';
 import { spawnEditor } from '../editor.ts';
 
 // Remove pause signal file if exists (auto-resume on main command)
@@ -34,51 +31,21 @@ function removePauseFile(cwd: string): void {
   }
 }
 
-// Handle muted mode - wait timeout then output continue
+// Handle muted mode - wait timeout then print reminder (matches editor timeout behavior)
 async function handleMutedMode(timeoutMinutes: number): Promise<void> {
-  const muteInfo = getMuteInfo();
   const timeoutMs = timeoutMinutes * 60 * 1000;
-
-  // Print mute status to stderr
-  console.error(
-    chalk.yellow('⚡') +
-      ' Muted mode - waiting ' +
-      chalk.cyan(`${timeoutMinutes} min`) +
-      ' before auto-continue...'
-  );
-  if (muteInfo.timestamp) {
-    console.error(chalk.dim(`  Muted since: ${muteInfo.timestamp}`));
-  }
 
   // Wait for timeout
   await new Promise((resolve) => setTimeout(resolve, timeoutMs));
 
-  // Output continue to stdout
-  console.log('continue');
+  // Print unified reminder to stderr - same as editor timeout with empty input
+  console.error(getAskMeReminderMessage());
 }
 
-// Handle busy editor - wait or skip
-async function handleBusyEditor(
-  project: string,
-  timeoutMinutes: number
-): Promise<'acquired' | 'timeout'> {
-  const lockInfo = getEditorLockInfo();
-
-  console.error(
-    chalk.yellow('⏳') + ' Editor in use by: ' + chalk.cyan(lockInfo.project || 'unknown project')
-  );
-  console.error(chalk.dim('  Waiting for editor to become available...'));
-
-  // Try to acquire lock with wait
+// Handle busy editor - wait or skip (silent, no console output)
+async function handleBusyEditor(project: string): Promise<'acquired' | 'timeout'> {
   const acquired = await acquireEditorLock(project);
-  if (acquired) {
-    console.error(chalk.green('✓') + ' Editor acquired');
-    return 'acquired';
-  }
-
-  // Timeout reached
-  console.error(chalk.yellow('⚠') + ' Timeout waiting for editor, auto-continuing...');
-  return 'timeout';
+  return acquired ? 'acquired' : 'timeout';
 }
 
 // Handle main ask-me command
@@ -104,15 +71,21 @@ export async function handleMainCommand(options: CLIOptions): Promise<void> {
   const projectName = mapCwdToDirName(options.cwd);
 
   // 3.5. Check editor lock - wait if busy
-  let editorLockAcquired = tryAcquireEditorLock(projectName);
-  if (!editorLockAcquired) {
-    const result = await handleBusyEditor(projectName, timeoutMinutes);
-    if (result === 'timeout') {
-      // Could not acquire editor in time, output continue
-      console.log('continue');
+  let lockResult = tryAcquireEditorLock(projectName);
+  if (!lockResult.acquired) {
+    if (lockResult.busy) {
+      // Lock is held by another process, wait for it
+      const waitResult = await handleBusyEditor(projectName);
+      if (waitResult === 'timeout') {
+        // Could not acquire editor in time, output unified reminder
+        console.error(getAskMeReminderMessage());
+        return;
+      }
+    } else {
+      // Lock acquisition error, output unified reminder
+      console.error(getAskMeReminderMessage());
       return;
     }
-    editorLockAcquired = true;
   }
 
   try {
@@ -169,10 +142,8 @@ export async function handleMainCommand(options: CLIOptions): Promise<void> {
       }
     });
   } finally {
-    // Release editor lock
-    if (editorLockAcquired) {
-      releaseEditorLock();
-    }
+    // Release editor lock (always release since we only reach here if lock was acquired)
+    releaseEditorLock();
   }
 
   // All paths exit with code 0 (required for Cursor)
