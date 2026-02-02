@@ -3,15 +3,49 @@ alwaysApply: true
 ---
 # Ask-Me Continuous Work Mode
 
-AI agent MUST use `ask-me` CLI to interact with user. NEVER wait for chat input. After completing any task, immediately call `ask-me` to get next instruction.
+AI agent MUST use `ask-me` CLI to get user input. Do NOT use chat for input — all user input comes through `ask-me`. After completing any task, run `ask-me` as a blocking shell call and read its stdout for the next instruction. Do NOT run any other commands between finishing a task and calling `ask-me`.
 
+
+## Execution Model (CRITICAL)
+
+`ask-me` is a **BLOCKING**, **SYNCHRONOUS** command. It spawns an editor for the user, waits for their input, and only returns after the user closes the editor. The command's stdout IS the user's response.
+
+```
+MUST run ask-me as a BLOCKING shell command — wait for it to finish.
+NEVER run ask-me in background, async mode, or as a non-blocking call.
+NEVER use sleep, polling, or "explore terminal" to wait for ask-me output.
+NEVER run any other commands while ask-me is running.
+The command will block until the user responds — this is by design.
+After ask-me returns, its stdout contains the user's full response.
+```
+
+### Correct Execution Pattern
+
+```
+1. Run ask-me as a synchronous shell command (blocking call)
+2. The command blocks — the terminal will appear to "hang" — this is NORMAL
+3. Wait for the command to finish (user is typing their response)
+4. Read stdout — this is the user's instruction
+5. Act on the instruction
+```
+
+### WRONG Patterns (NEVER DO THESE)
+
+```
+❌ Run ask-me, then run "sleep 10", then check terminal
+❌ Run ask-me in background, then poll for output
+❌ Run ask-me, then "Explore terminal" to check status
+❌ Run ask-me with timeout or async wrapper
+❌ Cancel ask-me and retry with longer sleep
+```
 
 ## Core Rules
 
 ```
-NEVER stop and wait for chat input.
-ALWAYS call ask-me after completing work.
+Do NOT use chat for user input — all input comes via ask-me stdout.
+ALWAYS call ask-me after completing work (it is a BLOCKING call).
 ALWAYS provide COMPLETE and DETAILED context.
+ALWAYS run ask-me as a BLOCKING call — never async, never sleep/poll.
 ```
 
 ## Enhanced Context Generation Rules
@@ -160,9 +194,32 @@ next:
 
 ## Command Format
 
+**IMPORTANT**: This is a BLOCKING call. Do NOT run it in background. Do NOT use sleep or polling. Just run it and wait for it to return.
+
 ```bash
-ask-me --cwd="$(pwd)" --title="<LABEL>: <action summary>" --context="<structured metadata>"
+# This command BLOCKS until the user responds — do NOT interrupt or poll
+# Use the actual absolute path of the current working directory for --cwd
+ask-me --cwd="<absolute path to cwd>" --title="<LABEL>: <action summary>" --context="<structured metadata>"
+# stdout contains the user's response — parse and act on it
 ```
+
+### Shell Argument Notes
+
+- The `--context` value can be multi-line. Use proper shell quoting for your platform.
+- Escape or avoid literal double-quotes inside `--context="..."` — they will break the argument.
+- The `--title` and `--context` values are strings, not evaluated by the shell. Do NOT include shell variables or subshells in them.
+
+### Interpreting ask-me Output
+
+ask-me always exits with code 0. Read **stdout** to determine what happened:
+
+| stdout | Meaning | Action |
+|--------|---------|--------|
+| Has content | User provided input | Parse as instruction and execute |
+| Empty | Timeout or user gave no input | Call ask-me again with same or updated context |
+
+- **stderr** may contain reminder messages — ignore these, only parse **stdout**.
+- If ask-me crashes or fails to run, check that the editor is configured (`ask-me editor list`).
 
 ## Title Format
 
@@ -202,7 +259,9 @@ ask-me --cwd="$(pwd)" --title="<LABEL>: <action summary>" --context="<structured
 ## First Call (Session Start)
 
 ```bash
-ask-me --cwd="$(pwd)" \
+# BLOCKING call — waits for user to respond before returning
+# Use the actual absolute path of the current working directory for --cwd
+ask-me --cwd="<absolute path to cwd>" \
   --title="READY: 持续工作模式已激活" \
   --context="summary: 智能上下文模式已启动，正在分析项目环境
 
@@ -249,12 +308,11 @@ These operations need user approval BEFORE starting:
 
 **Pattern**:
 ```bash
-# Before destructive operation
-ask-me --cwd="$(pwd)" \
+# Before destructive operation — this is a BLOCKING call, it waits for user input
+ask-me --cwd="<absolute path to cwd>" \
   --title="CONFIRM: 即将删除 15 个废弃的测试文件" \
   --context="..."
-
-# Wait for user response
+# Command returns with user's response in stdout
 # Only proceed if user confirms
 ```
 
@@ -262,9 +320,13 @@ ask-me --cwd="$(pwd)" \
 
 | Never Do This | Why |
 |---------------|-----|
-| Output "还有什么需要帮助的吗?" | Signals waiting - use ask-me instead |
-| Wait for chat input | All input via ask-me only |
+| Output "还有什么需要帮助的吗?" | Do not ask in chat — run ask-me to get input |
+| Use chat for user input | All input comes via ask-me stdout only |
 | Skip PAUSED context details | User needs to know exact state |
+| Run ask-me asynchronously or in background | ask-me is blocking — it returns when user responds |
+| Use `sleep` or polling after running ask-me | ask-me blocks by design — no polling needed |
+| "Explore terminal" to check ask-me status | Just wait for the blocking command to return |
+| Run any command while ask-me is running | ask-me must be the only active command |
 
 ## Allowed Behaviors
 
@@ -327,9 +389,9 @@ state:
 **With ask-me continuous mode**:
 - User watches AI work in real-time
 - Spots wrong direction early (e.g., after 2 files out of 10)
-- AI stops immediately and provides detailed state
+- AI pauses current approach and calls ask-me with detailed state
 - Provides comprehensive context: what's done, what's in progress
-- User corrects direction
+- User corrects direction via ask-me response
 - AI resumes with correct approach
 - **Saves time by catching errors early**
 
